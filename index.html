@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<title>SnapRead Web</title>
+<style>
+:root{--bg:#0f0f14;--card:#1a1a25;--card2:#1e1e2a;--text:#e0e0e0;--text2:#999;--accent:#4a90d9;--green:#22c55e;--yellow:#f59e0b;--red:#ef4444;--border:#2a2a3a;--radius:12px}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang HK','Noto Sans TC',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;min-height:100dvh;display:flex;flex-direction:column}
+.header{background:linear-gradient(135deg,#1a1a30,#1e1e35);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)}
+.header h1{font-size:17px;font-weight:700;letter-spacing:.5px}
+.header h1 span{color:var(--accent)}
+.badge{font-size:10px;color:var(--text2);background:var(--card2);border:1px solid var(--border);padding:2px 8px;border-radius:20px}
+main{flex:1;display:flex;flex-direction:column;gap:10px;padding:10px;max-width:640px;width:100%;margin:0 auto}
+#camWrap{position:relative;background:#000;border-radius:var(--radius);overflow:hidden;aspect-ratio:4/3;border:1px solid var(--border)}
+#video,#freeze{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#freeze{display:none}
+#scanMask{position:absolute;left:8%;right:8%;top:12%;bottom:12%;border:2px dashed rgba(74,144,217,.75);border-radius:8px;pointer-events:none;transition:opacity .3s}
+#scanMask.hidden{opacity:0}
+.scanline{position:absolute;left:8%;right:8%;height:2px;top:12%;background:linear-gradient(90deg,transparent,var(--accent),transparent);box-shadow:0 0 12px var(--accent);animation:scan 2.6s ease-in-out infinite;pointer-events:none}
+@keyframes scan{0%,100%{top:12%}50%{top:86%}}
+.controls{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.controls button,.bar button{background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:11px 6px;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;min-height:44px}
+.controls button:active,.bar button:active{transform:scale(.96)}
+.controls button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.controls button.green{background:var(--green);border-color:var(--green);color:#082c12}
+.controls button.active{box-shadow:0 0 0 2px var(--yellow);color:var(--yellow)}
+button:disabled{opacity:.4;pointer-events:none}
+.rowbar{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px}
+.rowbar .label{font-size:12px;color:var(--text2);white-space:nowrap}
+.rowbar select{flex:1;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:13px;min-width:0}
+.rowbar button{background:var(--card2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 12px;font-size:13px;cursor:pointer;white-space:nowrap}
+#resultCard{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px;min-height:110px;display:flex;flex-direction:column;gap:8px}
+#resultHead{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text2)}
+#ocrText{font-size:16px;line-height:1.55;max-height:26vh;overflow-y:auto;white-space:pre-wrap;word-break:break-word;flex:1}
+#ocrText.empty{color:var(--text2)}
+#progress{font-size:11px;color:var(--yellow);min-height:14px}
+#progressBar{height:3px;background:var(--card2);border-radius:2px;overflow:hidden}
+#progressBar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+.status{font-size:11px;color:var(--text2);text-align:center;min-height:15px}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#333;color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;z-index:99;opacity:0;transition:opacity .3s;pointer-events:none;max-width:86vw;text-align:center}
+.toast.show{opacity:.96}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📖 Snap<span>Read</span></h1>
+  <span class="badge">OCR + 朗讀 · 網頁版</span>
+</div>
+
+<main>
+  <div id="camWrap">
+    <video id="video" autoplay playsinline muted></video>
+    <img id="freeze" alt="">
+    <div id="scanMask"></div>
+    <div class="scanline" id="scanline"></div>
+  </div>
+
+  <div class="controls">
+    <button id="btnCam">📷 開鏡頭</button>
+    <button id="btnScan" class="primary">🔍 掃描</button>
+    <button id="btnAuto" class="green">🔄 自動:關</button>
+  </div>
+
+  <div class="rowbar">
+    <span class="label">語言</span>
+    <select id="langSel">
+      <option value="eng">English (英文)</option>
+      <option value="chi_sim">中文 (簡體)</option>
+    </select>
+    <span class="label">模式</span>
+    <select id="modeSel">
+      <option value="en">只英文</option>
+      <option value="en_zh">英+中</option>
+    </select>
+  </div>
+
+  <div id="resultCard">
+    <div id="resultHead">
+      <span id="modeTag">就緒</span>
+      <span id="confTag"></span>
+    </div>
+    <div id="ocrText" class="empty">鏡頭對準文字，按「掃描」開始…</div>
+  </div>
+
+  <div id="progress"></div>
+  <div id="progressBar"><i></i></div>
+
+  <div class="rowbar">
+    <span class="label">朗讀</span>
+    <select id="voiceSel"><option value="">載入聲線中…</option></select>
+    <span class="label">語速</span>
+    <select id="speedSel">
+      <option value="0.8">慢 0.8×</option>
+      <option value="1" selected>正常 1×</option>
+      <option value="1.2">快 1.2×</option>
+    </select>
+    <button id="btnSpeak" class="primary">🔊 讀</button>
+    <button id="btnStop">⏹ 停</button>
+  </div>
+
+  <div class="status" id="status"></div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const state = {
+  stream: null,
+  worker: null,
+  readyLang: '',
+  busy: false,
+  autoScan: false,
+  autoTimer: null,
+  lastText: '',
+  lastRead: '',
+  cameraOn: false
+};
+
+/* ---------- toast ---------- */
+let toastTimer;
+function toast(msg){
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.classList.remove('show'), 2200);
+}
+
+/* ---------- status / progress ---------- */
+function setStatus(s){ $('status').textContent = s; }
+function setProgress(p){
+  $('progressBar').firstElementChild.style.width = p + '%';
+}
+
+/* ---------- camera ---------- */
+async function toggleCamera(){
+  if(state.cameraOn){ stopCamera(); return; }
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:'environment', width:{ideal:1920}, height:{ideal:1080} },
+      audio:false
+    });
+    state.stream = stream;
+    const v = $('video');
+    v.srcObject = stream;
+    await v.play();
+    state.cameraOn = true;
+    $('btnCam').textContent = '📵 關鏡頭';
+    $('btnCam').classList.add('active');
+    $('freeze').style.display='none';
+    $('video').style.display='block';
+    $('scanMask').classList.remove('hidden');
+    setStatus('鏡頭已開 — 對準文字');
+    initTesseract();
+  }catch(e){
+    toast('開唔到鏡頭：' + (e && e.message ? e.message : '拒絕權限或無相機'));
+    console.error(e);
+  }
+}
+function stopCamera(){
+  if(state.stream){ state.stream.getTracks().forEach(t=>t.stop()); state.stream=null; }
+  state.cameraOn = false;
+  stopAuto();
+  $('video').srcObject = null;
+  $('btnCam').textContent = '📷 開鏡頭';
+  $('btnCam').classList.remove('active');
+  $('scanMask').classList.add('hidden');
+  setStatus('');
+}
+
+/* ---------- tesseract ---------- */
+async function initTesseract(){
+  if(state.worker) return;
+  try{
+    const lang = $('langSel').value;
+    setStatus('準備 OCR 引擎（首次需下載語言包，之後自動快取）…');
+    const worker = await Tesseract.createWorker(lang, 1, {
+      logger: m => {
+        if(m.status === 'recognizing text') setProgress(Math.round(m.progress*100));
+      }
+    });
+    state.worker = worker;
+    state.readyLang = lang;
+    setProgress(100); setTimeout(()=>{setProgress(0); setStatus('OCR 引擎就緒 ✓');},400);
+  }catch(e){
+    console.error(e);
+    toast('OCR 引擎初始化失敗：' + (e.message||e));
+    setStatus('OCR 初始化失敗 — 檢查網絡後重試');
+  }
+}
+
+async function ensureLang(lang){
+  if(!state.worker) return false;
+  if(state.readyLang === lang) return true;
+  try{
+    setStatus('切換語言包中…');
+    await state.worker.reinitialize(lang);
+    state.readyLang = lang;
+    setStatus('語言已切換: ' + lang);
+    return true;
+  }catch(e){
+    console.error(e); toast('語言切換失敗'); return false;
+  }
+}
+
+/* ---------- scan ---------- */
+function captureFrame(){
+  const v = $('video');
+  const c = document.createElement('canvas');
+  const w = v.videoWidth, h = v.videoHeight;
+  if(!w||!h) return null;
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(v, 0, 0, w, h);
+  return c;
+}
+
+async function doScan(){
+  if(state.busy) return;
+  if(!state.cameraOn || !state.stream){
+    toast('請先開鏡頭'); return;
+  }
+  if(!state.worker){ toast('OCR 引擎準備中，請稍候…'); return; }
+  state.busy = true;
+  $('btnScan').textContent = '⏳ 辨識中…';
+  $('scanline').style.animationPlayState='running';
+  try{
+    const canvas = captureFrame();
+    if(!canvas){ toast('讀唔到畫面'); return; }
+    // 凍結畫面俾用戶睇緊掃緊邊幀
+    $('freeze').src = canvas.toDataURL('image/jpeg', 0.85);
+    $('freeze').style.display='block';
+    $('video').style.display='none';
+    $('scanMask').classList.add('hidden');
+
+    const lang = $('langSel').value;
+    if(!await ensureLang(lang)) return;
+    setStatus('辨識中…');
+    const { data } = await state.worker.recognize(canvas);
+    let text = (data.text||'').trim();
+
+    // 過濾：modeSel
+    const mode = $('modeSel').value;
+    let out = text;
+    if(mode === 'en'){
+      // 只保留拉丁字符行
+      out = text.split('\n')
+        .map(l=>l.trim())
+        .filter(l=>/[\x00-\x7F]{2,}/.test(l))
+        .join('\n');
+    }
+    $('ocrText').textContent = out || '（未偵測到文字）';
+    $('ocrText').classList.toggle('empty', !out);
+    state.lastText = out;
+    $('confTag').textContent = data.confidence>0 ? '信心 '+data.confidence.toFixed(0)+'%' : '';
+    $('modeTag').textContent = new Date().toLocaleTimeString('zh-HK',{hour12:false}) + ' · ' + lang;
+    setStatus('完成 ✓');
+
+    if(out && out !== state.lastRead){
+      state.lastRead = out;
+      autoSpeak(out);
+    }
+  }catch(e){
+    console.error(e); setStatus('辨識出錯：'+ (e.message||e));
+  }finally{
+    state.busy=false;
+    $('btnScan').textContent = '🔍 掃描';
+    // 恢復 live
+    $('freeze').style.display='none';
+    $('video').style.display='block';
+    $('scanMask').classList.remove('hidden');
+    $('scanline').style.animationPlayState='paused';
+  }
+}
+
+/* ---------- auto scan ---------- */
+function toggleAuto(){
+  state.autoScan = !state.autoScan;
+  $('btnAuto').textContent = state.autoScan ? '🔄 自動:開' : '🔄 自動:關';
+  $('btnAuto').classList.toggle('active', state.autoScan);
+  if(state.autoScan){
+    if(!state.cameraOn){ toast('請先開鏡頭'); state.autoScan=false; $('btnAuto').textContent='🔄 自動:關'; return; }
+    state.autoTimer = setInterval(()=>{ if(!state.busy) doScan(); }, 3500);
+    setStatus('自動掃描已開（每 3.5 秒）');
+  }else{
+    stopAuto();
+  }
+}
+function stopAuto(){
+  state.autoScan=false;
+  if(state.autoTimer){ clearInterval(state.autoTimer); state.autoTimer=null; }
+  const b=$('btnAuto');
+  if(b){ b.textContent='🔄 自動:關'; b.classList.remove('active'); }
+}
+
+/* ---------- speech ---------- */
+let voices = [];
+function loadVoices(){
+  voices = speechSynthesis.getVoices();
+  const sel = $('voiceSel');
+  const current = sel.value;
+  sel.innerHTML='';
+  // 英文優先排前
+  const sorted = [...voices].sort((a,b)=>{
+    const ea=a.lang.startsWith('en')?0:1, eb=b.lang.startsWith('en')?0:1;
+    return ea-eb || a.name.localeCompare(b.name);
+  });
+  if(sorted.length===0){ sel.innerHTML='<option value="">無可用聲線</option>'; return; }
+  sorted.forEach(v=>{
+    const o=document.createElement('option');
+    o.value=v.name;
+    o.textContent=(v.lang.startsWith('en')?'🔤 ':'🌐 ')+v.name+' ('+v.lang+')';
+    if(v.default || (current && v.name===current)) o.selected=true;
+    sel.appendChild(o);
+  });
+  if(!current){ // default: prefer en-GB then en-US
+    const pick = sorted.find(v=>v.lang.startsWith('en-GB')) || sorted.find(v=>v.lang.startsWith('en-US')) || sorted[0];
+    if(pick) sel.value=pick.name;
+  }
+}
+if('speechSynthesis' in window){
+  loadVoices();
+  speechSynthesis.onvoiceschanged = loadVoices;
+}else{
+  $('voiceSel').innerHTML='<option value="">此瀏覽器不支援朗讀</option>';
+}
+
+function pickVoice(text){
+  const wantEn = /[a-zA-Z]/.test(text);
+  const selVoice = $('voiceSel').value;
+  if(selVoice){ const v=voices.find(v=>v.name===selVoice); if(v) return v; }
+  if(wantEn){
+    return voices.find(v=>v.lang.startsWith('en-GB')) ||
+           voices.find(v=>v.lang.startsWith('en-US')) || null;
+  }
+  return voices.find(v=>/zh|cmn|yue/i.test(v.lang)) || null;
+}
+
+function autoSpeak(text){
+  // 自動朗讀：淨係英文內容先自動讀（避免中英混雜讀錯）
+  if(!/^[\x20-\x7E\s.,!?'"()-]+$/.test(text)) return;
+  speak(text);
+}
+
+function speak(text){
+  if(!text || !('speechSynthesis' in window)){ if(text) toast('此瀏覽器唔支援朗讀'); return; }
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  const v = pickVoice(text);
+  if(v) u.voice = v;
+  u.lang = v ? v.lang : (/[\u4e00-\u9fff]/.test(text) ? 'zh-CN' : 'en-US');
+  u.rate = parseFloat($('speedSel').value);
+  $('modeTag').textContent = '🔊 朗讀中…';
+  u.onend = ()=> $('modeTag').textContent = '就緒';
+  u.onerror = ()=> $('modeTag').textContent = '就緒';
+  speechSynthesis.speak(u);
+}
+function stopSpeak(){
+  speechSynthesis.cancel();
+  $('modeTag').textContent='就緒';
+}
+
+/* ---------- events ---------- */
+$('btnCam').addEventListener('click', toggleCamera);
+$('btnScan').addEventListener('click', ()=>doScan());
+$('btnAuto').addEventListener('click', toggleAuto);
+$('btnSpeak').addEventListener('click', ()=>speak(state.lastText));
+$('btnStop').addEventListener('click', stopSpeak);
+$('langSel').addEventListener('change', ()=>{
+  state.lastRead='';
+  toast('已選 ' + $('langSel').selectedOptions[0].textContent + '（下次掃描生效）');
+});
+$('modeSel').addEventListener('change', ()=>{ state.lastRead=''; });
+
+// 掃描鍵 keyboard 支援（唔佔住相機 live）
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden) stopAuto(); });
+window.addEventListener('load', ()=>setStatus('按「開鏡頭」開始 · OCR 語言包首次下載約 10-20MB'));
+</script>
+</body>
+</html>
