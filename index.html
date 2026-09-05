@@ -205,6 +205,21 @@ async function ensureLang(lang){
   }
 }
 
+/* ---------- OCR text 修正 ---------- */
+// OCR 有時會將連續單字母拆開（如 "D O G"）→ 合併返做詞語（正常散文幾乎冇 3+ 連續單字母，誤判風險極低）
+function fixSpacedLetters(s){
+  return s.split('\n').map(line=>{
+    const parts = line.split(' ');
+    const out = []; let run = [];
+    for(const p of parts){
+      if(/^[A-Za-z]$/.test(p)){ run.push(p); }
+      else { if(run.length>=3) out.push(run.join('')); else out.push(...run); run=[]; out.push(p); }
+    }
+    if(run.length>=3) out.push(run.join('')); else out.push(...run);
+    return out.join(' ');
+  }).join('\n');
+}
+
 /* ---------- scan ---------- */
 function captureFrame(){
   const v = $('video');
@@ -238,7 +253,7 @@ async function doScan(){
     if(!await ensureLang(lang)) return;
     setStatus('辨識中…');
     const { data } = await state.worker.recognize(canvas);
-    let text = (data.text||'').trim();
+    let text = fixSpacedLetters((data.text||'').trim());
 
     // 過濾：modeSel
     const mode = $('modeSel').value;
@@ -327,14 +342,29 @@ if('speechSynthesis' in window){
 }
 
 function pickVoice(text){
-  const wantEn = /[a-zA-Z]/.test(text);
-  const selVoice = $('voiceSel').value;
-  if(selVoice){ const v=voices.find(v=>v.name===selVoice); if(v) return v; }
-  if(wantEn){
-    return voices.find(v=>v.lang.startsWith('en-GB')) ||
-           voices.find(v=>v.lang.startsWith('en-US')) || null;
+  const hasCJK = /[\u4e00-\u9fff]/.test(text);
+  const stripped = text.replace(/[^A-Za-z\s]/g,' ');
+  const pureEn = /^[\sA-Za-z]+$/.test(stripped.trim()) && /[A-Za-z]/.test(text);
+  const sel = voices.find(v=>v.name===$('voiceSel').value);
+  if(hasCJK){
+    // 中文內容：優先中文聲線（英文聲線讀中文會怪聲）
+    return voices.find(v=>/zh|cmn|yue/i.test(v.lang)) || sel || null;
   }
-  return voices.find(v=>/zh|cmn|yue/i.test(v.lang)) || null;
+  if(pureEn){
+    // ⚠️ 純英文內容必須用英文聲線：中文 TTS 引擎會將英文字逐個字母拼讀（D-O-G）
+    const enList = voices.filter(v=>/^en/i.test(v.lang));
+    if(sel && /^en/i.test(sel.lang)) return sel;   // 用戶揀咗英文聲線 → 尊重
+    const pick = enList.find(v=>/^en-GB/i.test(v.lang)) ||
+                 enList.find(v=>/^en-US/i.test(v.lang)) ||
+                 enList[0];
+    if(pick){
+      if(sel) toast('⚠️ 已自動轉用英文聲線（中文聲線會逐字母讀英文）');
+      return pick;
+    }
+    if(sel) toast('⚠️ 此裝置冇英文聲線，讀英文會變逐字母 — 請裝英文語音');
+    return null;
+  }
+  return sel || null;
 }
 
 function autoSpeak(text){
